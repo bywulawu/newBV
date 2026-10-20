@@ -1,0 +1,106 @@
+name: Build Debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble Debug
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # versionCode 来自 git rev-list --count HEAD，浅克隆会恒为 1
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform 36
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Read APK metadata
+        id: meta
+        run: |
+          META=app/build/outputs/apk/debug/output-metadata.json
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -type f | head -n 1)
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "versionCode=$(jq -r '.elements[0].versionCode' "$META")" >> "$GITHUB_OUTPUT"
+          echo "versionName=$(jq -r '.elements[0].versionName' "$META")" >> "$GITHUB_OUTPUT"
+          echo "### newBV Debug APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- versionCode: $(jq -r '.elements[0].versionCode' "$META")" >> "$GITHUB_STEP_SUMMARY"
+          echo "- versionName: $(jq -r '.elements[0].versionName' "$META")" >> "$GITHUB_STEP_SUMMARY"
+          echo "- commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: newBV-debug-${{ steps.meta.outputs.versionCode }}-${{ github.run_number }}
+          path: |
+            ${{ steps.meta.outputs.apk }}
+            app/build/outputs/apk/debug/output-metadata.json
+          if-no-files-found: error
+
+  checks:
+    name: Unit Tests & Static Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform 36
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew test --stacktrace
+
+      - name: Run ktlint and detekt
+        run: ./gradlew ktlintCheck detekt --stacktrace
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_number }}
+          path: |
+            **/build/reports/tests/**
+            **/build/reports/detekt/**
+          if-no-files-found: ignore
