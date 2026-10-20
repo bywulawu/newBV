@@ -44,6 +44,8 @@ internal object PrefKeys {
     val defaultQuality = intPreferencesKey("dq")
     val defaultVideoCodec = intPreferencesKey("dvc")
     val enableSoftwareVideoDecoder = booleanPreferencesKey("enable_software_video_decoder")
+    val lowMemoryMode = booleanPreferencesKey("low_memory_mode")
+    val enableTunneledPlayback = booleanPreferencesKey("enable_tunneled_playback")
     val actionAfterPlay = intPreferencesKey("action_after_play")
     val playerCustomShortcuts = stringPreferencesKey("player_custom_shortcuts")
 

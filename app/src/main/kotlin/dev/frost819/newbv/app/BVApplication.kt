@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
+import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import dagger.hilt.android.HiltAndroidApp
@@ -14,6 +15,7 @@ import dev.frost819.newbv.app.util.CacheManager
 import dev.frost819.newbv.biliapi.http.BiliHttpApi
 import dev.frost819.newbv.biliapi.repositories.AuthRepository
 import dev.frost819.newbv.biliapi.repositories.ChannelRepository
+import dev.frost819.newbv.core.device.DeviceProfile
 import dev.frost819.newbv.core.log.CrashHandler
 import dev.frost819.newbv.core.log.CrashUploader
 import dev.frost819.newbv.core.log.Loggers
@@ -27,6 +29,9 @@ import okio.Path.Companion.toPath
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Provider
+
+/** 低内存设备的图片内存缓存占应用堆上限的比例。 */
+private const val LOW_MEMORY_IMAGE_CACHE_PERCENT = 0.10
 
 /**
  * new BV 应用入口。
@@ -128,6 +133,13 @@ class BVApplication : Application() {
 
         logger.info { "Application started" }
 
+        val deviceProfile = DeviceProfile.detect(this)
+        val useLowMemory = Prefs.lowMemoryMode && deviceProfile.isLowMemory
+        logger.info {
+            "Device profile: tcl=${deviceProfile.isTcl}, lowMemory=${deviceProfile.isLowMemory}, " +
+                "memoryClass=${deviceProfile.memoryClassMb}MB, lowMemoryOptimization=$useLowMemory"
+        }
+
         // 图片磁盘缓存上限：开启自动清理且设置了阈值时按阈值限制，否则不限制。
         // Coil 在每次写入时自动 LRU 淘汰超限条目（缓存满阈值自动清理）。
         val diskCacheMaxBytes =
@@ -147,8 +159,21 @@ class BVApplication : Application() {
         coil3.SingletonImageLoader.setSafe {
             ImageLoader
                 .Builder(this)
-                .crossfade(true)
-                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+                .apply {
+                    if (useLowMemory) {
+                        // TCL 等低内存电视的应用堆上限约 192 MB：
+                        // 关闭交叉淡入（每张图短暂持有两份 Bitmap），并把内存缓存压到堆的 10%。
+                        crossfade(false)
+                        memoryCache(
+                            MemoryCache
+                                .Builder()
+                                .maxSizePercent(this@BVApplication, LOW_MEMORY_IMAGE_CACHE_PERCENT)
+                                .build(),
+                        )
+                    } else {
+                        crossfade(true)
+                    }
+                }.memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                 .diskCache(imageDiskCache)
                 .components {

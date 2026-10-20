@@ -270,6 +270,22 @@ object Prefs {
     /** 启用视频软解。 */
     var enableSoftwareVideoDecoder by pref(PrefKeys.enableSoftwareVideoDecoder, false)
 
+    /**
+     * 低内存优化开关（默认开启）。
+     *
+     * 仅对低内存设备生效（TCL 或 `memoryClass` ≤ 256 MB），
+     * 用于限制图片内存缓存与播放器缓冲，降低 OOM 崩溃概率。
+     */
+    var lowMemoryMode by pref(PrefKeys.lowMemoryMode, true)
+
+    /**
+     * 是否启用硬件隧道播放（实验性，默认关闭）。
+     *
+     * 隧道模式把音视频直通电视硬件解码/显示链路，可能改善 TCL 电视的
+     * 卡顿或音画不同步，但部分机型会出现黑屏，需用户自行开关验证。
+     */
+    var enableTunneledPlayback by pref(PrefKeys.enableTunneledPlayback, false)
+
     /** 播放结束动作。 */
     var actionAfterPlay by pref(
         PrefKeys.actionAfterPlay,

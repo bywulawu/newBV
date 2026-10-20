@@ -17,6 +17,8 @@ class VideoPlayerOptionsTest {
         assertThat(options.referer).isNull()
         assertThat(options.enableFfmpegAudioRenderer).isFalse()
         assertThat(options.enableSoftwareVideoDecoder).isFalse()
+        assertThat(options.enableTunneledPlayback).isFalse()
+        assertThat(options.lowMemoryMode).isFalse()
     }
 
     @Test
@@ -27,12 +29,16 @@ class VideoPlayerOptionsTest {
                 referer = "https://www.bilibili.com",
                 enableFfmpegAudioRenderer = true,
                 enableSoftwareVideoDecoder = true,
+                enableTunneledPlayback = true,
+                lowMemoryMode = true,
             )
 
         assertThat(options.userAgent).isEqualTo("Mozilla/5.0")
         assertThat(options.referer).isEqualTo("https://www.bilibili.com")
         assertThat(options.enableFfmpegAudioRenderer).isTrue()
         assertThat(options.enableSoftwareVideoDecoder).isTrue()
+        assertThat(options.enableTunneledPlayback).isTrue()
+        assertThat(options.lowMemoryMode).isTrue()
     }
 
     @Test

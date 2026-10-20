@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -24,6 +25,7 @@ import dev.frost819.newbv.app.ui.component.settings.SettingListItem
 import dev.frost819.newbv.app.ui.component.settings.SettingSwitchListItem
 import dev.frost819.newbv.app.ui.component.settings.displayName
 import dev.frost819.newbv.app.ui.screen.settings.SettingsMenuNavItem
+import dev.frost819.newbv.core.device.DeviceProfile
 import dev.frost819.newbv.data.datastore.ActionAfterPlay
 import dev.frost819.newbv.data.datastore.Audio
 import dev.frost819.newbv.data.datastore.PlaySpeed
@@ -34,11 +36,13 @@ import dev.frost819.newbv.data.datastore.VideoCodec
 /**
  * 音视频设置页。
  *
- * 画质/编码/音轨/倍速/播放结束动作/快捷键/软解/FFmpeg 音频。
+ * 画质/编码/音轨/倍速/播放结束动作/快捷键/软解/FFmpeg 音频/低内存优化/隧道播放。
  */
 @Composable
 fun AudioVideoSetting(modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    val deviceProfile = remember { DeviceProfile.detect(context) }
 
     var showResolutionDialog by remember { mutableStateOf(false) }
     var showAudioCodecDialog by remember { mutableStateOf(false) }
@@ -56,8 +60,20 @@ fun AudioVideoSetting(modifier: Modifier = Modifier) {
 
     var enableFfmpegAudioRenderer by remember { mutableStateOf(Prefs.enableFfmpegAudioRenderer) }
     var enableSoftwareVideoDecoder by remember { mutableStateOf(Prefs.enableSoftwareVideoDecoder) }
+    var lowMemoryMode by remember { mutableStateOf(Prefs.lowMemoryMode) }
+    var enableTunneledPlayback by remember { mutableStateOf(Prefs.enableTunneledPlayback) }
     var showPlayerDebugInfo by remember { mutableStateOf(Prefs.showPlayerDebugInfo) }
     var autoSelectCdn by remember { mutableStateOf(Prefs.autoSelectCdn) }
+
+    val lowMemorySupportText =
+        when {
+            !deviceProfile.isLowMemory ->
+                "当前设备无需低内存优化（应用堆 ${deviceProfile.memoryClassMb} MB），此开关不生效"
+            !lowMemoryMode ->
+                "已关闭：不限制图片缓存与播放器缓冲"
+            else ->
+                "已启用：图片缓存限制为堆的 10%，播放缓冲上限 30 秒；重启应用后完整生效"
+        }
 
     Column(
         modifier =
@@ -110,6 +126,25 @@ fun AudioVideoSetting(modifier: Modifier = Modifier) {
             onCheckedChange = {
                 enableSoftwareVideoDecoder = it
                 Prefs.enableSoftwareVideoDecoder = it
+            },
+        )
+        SettingSwitchListItem(
+            title = "低内存优化",
+            supportText = lowMemorySupportText,
+            checked = lowMemoryMode,
+            onCheckedChange = {
+                lowMemoryMode = it
+                Prefs.lowMemoryMode = it
+            },
+        )
+        SettingSwitchListItem(
+            title = "隧道播放（实验性）",
+            supportText = "音视频直通电视硬件链路，可能改善 TCL 电视的卡顿或音画不同步；" +
+                "部分机型可能黑屏，切换后需重新进入播放器",
+            checked = enableTunneledPlayback,
+            onCheckedChange = {
+                enableTunneledPlayback = it
+                Prefs.enableTunneledPlayback = it
             },
         )
         SettingSwitchListItem(

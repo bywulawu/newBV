@@ -9,6 +9,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
@@ -23,6 +24,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.ParsingLoadable
 import dev.frost819.newbv.player.AbstractVideoPlayer
 import dev.frost819.newbv.player.VideoPlayerOptions
@@ -59,6 +61,12 @@ class ExoMediaPlayer(
         private const val BEHIND_LIVE_WINDOW_RECOVER_WINDOW_MS = 15_000L
         private const val BEHIND_LIVE_WINDOW_RECOVER_MIN_INTERVAL_MS = 1_200L
         private const val BEHIND_LIVE_WINDOW_MAX_RECOVERS = 2
+
+        private const val LOW_MEMORY_MIN_BUFFER_MS = 15_000
+        private const val LOW_MEMORY_MAX_BUFFER_MS = 30_000
+        private const val LOW_MEMORY_BUFFER_FOR_PLAYBACK_MS = 1_500
+        private const val LOW_MEMORY_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
+        private const val LOW_MEMORY_TARGET_BUFFER_BYTES = 64L * 1024 * 1024
     }
 
     /** ExoPlayer 实例，在 [initPlayer] 中创建 */
@@ -93,6 +101,9 @@ class ExoMediaPlayer(
     override fun initPlayer() {
         val renderersFactory =
             DefaultRenderersFactory(context).apply {
+                // 硬件解码器初始化失败时允许 ExoPlayer 回退到同 MIME 的其它解码器，
+                // 部分电视（如 TCL）默认解码器异常但备用解码器可用。
+                setEnableDecoderFallback(true)
                 setExtensionRendererMode(
                     when (options.enableFfmpegAudioRenderer) {
                         true -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
@@ -119,16 +130,48 @@ class ExoMediaPlayer(
                     setMediaCodecSelector(MediaCodecSelector.DEFAULT)
                 }
             }
-        mPlayer =
+
+        val playerBuilder =
             ExoPlayer
                 .Builder(context)
                 .setRenderersFactory(renderersFactory)
                 .setSeekForwardIncrementMs(1000 * 10)
                 .setSeekBackIncrementMs(1000 * 5)
-                .build()
+
+        if (options.enableTunneledPlayback) {
+            val trackSelector =
+                DefaultTrackSelector(context).apply {
+                    setParameters(buildUponParameters().setTunnelingEnabled(true).build())
+                }
+            playerBuilder.setTrackSelector(trackSelector)
+        }
+        if (options.lowMemoryMode) {
+            playerBuilder.setLoadControl(createLowMemoryLoadControl())
+        }
+
+        mPlayer = playerBuilder.build()
 
         mPlayer?.addListener(this)
     }
+
+    /**
+     * 低内存设备的加载策略。
+     *
+     * 默认策略最多缓冲 50 秒，4K 视频在 192 MB 堆的电视上会挤占图片与弹幕内存。
+     * 这里把起播缓冲降到 15 秒、最大缓冲降到 30 秒，并把缓冲区目标压到 64 MB，
+     * 同时保留 1.5 秒的快速起播阈值；字节上限仍高于常见 1080P 码率的 30 秒数据量，
+     * 因此优先牺牲 4K 长缓冲而不是正常播放流畅度。
+     */
+    private fun createLowMemoryLoadControl(): DefaultLoadControl =
+        DefaultLoadControl
+            .Builder()
+            .setBufferDurationsMs(
+                LOW_MEMORY_MIN_BUFFER_MS,
+                LOW_MEMORY_MAX_BUFFER_MS,
+                LOW_MEMORY_BUFFER_FOR_PLAYBACK_MS,
+                LOW_MEMORY_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+            ).setTargetBufferBytes(LOW_MEMORY_TARGET_BUFFER_BYTES)
+            .build()
 
     override fun setHeader(headers: Map<String, String>) {
         // ExoPlayer 通过 dataSourceFactory 设置默认请求头，此方法预留
@@ -281,11 +324,14 @@ class ExoMediaPlayer(
 
     override val debugInfo: String
         get() {
+            val memoryProfile = if (options.lowMemoryMode) "low-memory" else "standard"
+            val playbackMode = if (options.enableTunneledPlayback) ", tunneled" else ""
             return """
                 player: ${androidx.media3.common.MediaLibraryInfo.VERSION_SLASHY}
                 time: ${currentPosition.formatMinSec()} / ${duration.formatMinSec()}
                 speed: ${speed}x
                 buffered: $bufferedPercentage%
+                profile: $memoryProfile$playbackMode
                 resolution: ${mPlayer?.videoSize?.width} x ${mPlayer?.videoSize?.height}
                 audio: ${mPlayer?.audioFormat?.bitrate ?: 0} kbps
                 video codec: ${mPlayer?.videoFormat?.sampleMimeType ?: "null"}

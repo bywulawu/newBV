@@ -641,6 +641,54 @@ class PlayerViewModelTest {
         }
 
     @Test
+    fun `onReady sets PlayerState Ready and clears isBuffering`() =
+        runTest(testDispatcher) {
+            val listener = getVideoPlayerListener()
+            updateUiState { it.copy(isBuffering = true) }
+
+            listener.onReady()
+            runCurrent()
+
+            val state = viewModel.uiState.value
+            assertThat(state.playerState).isEqualTo(PlayerState.Ready)
+            assertThat(state.isBuffering).isFalse()
+            // onReady 启动的进度轮询是无限循环，显式取消避免测试调度器空转
+            viewModel.viewModelScope.cancel()
+        }
+
+    // ── buffering watchdog tests ─────────────────────────────
+
+    @Test
+    fun `buffering watchdog reports timeout when no recovery is possible`() =
+        runTest(testDispatcher) {
+            val listener = getVideoPlayerListener()
+            listener.onBuffering()
+
+            advanceTimeBy(15_000L)
+            runCurrent()
+
+            val state = viewModel.uiState.value
+            assertThat(state.playerState).isInstanceOf(PlayerState.Error::class.java)
+            assertThat(state.isBuffering).isFalse()
+        }
+
+    @Test
+    fun `onPlay cancels buffering watchdog`() =
+        runTest(testDispatcher) {
+            val listener = getVideoPlayerListener()
+            listener.onBuffering()
+
+            advanceTimeBy(10_000L)
+            listener.onPlay()
+            advanceTimeBy(20_000L)
+            runCurrent()
+
+            val state = viewModel.uiState.value
+            assertThat(state.playerState).isEqualTo(PlayerState.Playing)
+            assertThat(state.isBuffering).isFalse()
+        }
+
+    @Test
     fun `onEnd sets PlayerState Ended and emits PlayEnded effect`() =
         runTest(testDispatcher) {
             val listener = getVideoPlayerListener()

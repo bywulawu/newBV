@@ -37,6 +37,7 @@ import dev.frost819.newbv.biliapi.repositories.FavoriteRepository
 import dev.frost819.newbv.biliapi.repositories.LikeRepository
 import dev.frost819.newbv.biliapi.repositories.OneClickTripleActionRepository
 import dev.frost819.newbv.biliapi.repositories.VideoPlayRepository
+import dev.frost819.newbv.core.device.DeviceProfile
 import dev.frost819.newbv.core.log.Loggers
 import dev.frost819.newbv.data.datastore.Audio
 import dev.frost819.newbv.data.datastore.Prefs
@@ -76,6 +77,12 @@ private const val PLAYER_ACTION_TIMEOUT_MS = 10_000L
 
 /** 同时观看人数刷新间隔（cid 就绪后周期轮询）。 */
 private const val ONLINE_WATCH_REFRESH_MS = 60_000L
+
+/** 卡缓冲看门狗超时：持续缓冲超过该时长则自动切换节点或重连。 */
+private const val BUFFERING_WATCHDOG_MS = 15_000L
+
+/** 单次播放会话内看门狗最多自动恢复次数，超过则上报加载失败。 */
+private const val MAX_BUFFERING_RECOVERIES = 3
 
 /**
  * 播放器主 ViewModel。
@@ -132,6 +139,12 @@ class PlayerViewModel
         /** 运行时 CDN 回退已尝试到的候选下标。 */
         private var cdnFallbackIndex = 0
 
+        /** 卡缓冲看门狗任务。 */
+        private var bufferingWatchdogJob: Job? = null
+
+        /** 本次播放会话已执行的看门狗自动恢复次数。 */
+        private var bufferingRecoveryCount = 0
+
         private val detachedWorkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -181,6 +194,7 @@ class PlayerViewModel
             object : VideoPlayerListener {
                 override fun onError(error: Exception) {
                     logger.info { "onError: $error" }
+                    stopBufferingWatchdog()
                     // 自动选源模式下，优先尝试切换到下一个候选 CDN，避免单个节点故障导致播放中断
                     if (Prefs.autoSelectCdn && tryNextCdnFallback()) return
                     _uiState.update {
@@ -201,7 +215,8 @@ class PlayerViewModel
 
                 override fun onReady() {
                     logger.info { "onReady" }
-                    _uiState.update { it.copy(playerState = PlayerState.Ready) }
+                    stopBufferingWatchdog()
+                    _uiState.update { it.copy(playerState = PlayerState.Ready, isBuffering = false) }
                     updatePlaySpeed(forceUpdate = true)
                     startSeekerUpdater()
                     startDebugInfoUpdater()
@@ -209,6 +224,7 @@ class PlayerViewModel
 
                 override fun onPlay() {
                     logger.info { "onPlay" }
+                    stopBufferingWatchdog()
                     _uiState.update { it.copy(playerState = PlayerState.Playing, isBuffering = false) }
                     if (_uiState.value.lastPlayed > 0) {
                         seekToLastPlayed()
@@ -224,10 +240,12 @@ class PlayerViewModel
                 override fun onBuffering() {
                     logger.info { "onBuffering" }
                     _uiState.update { it.copy(isBuffering = true) }
+                    startBufferingWatchdog()
                 }
 
                 override fun onEnd() {
                     logger.info { "onEnd" }
+                    stopBufferingWatchdog()
                     stopSeekerUpdater()
                     stopDebugInfoUpdater()
                     _uiState.update { it.copy(playerState = PlayerState.Ended) }
@@ -403,6 +421,8 @@ class PlayerViewModel
          */
         fun initVideoPlayer(context: Context) {
             val apiType = Prefs.apiType
+            val deviceProfile = DeviceProfile.detect(context)
+            val lowMemoryMode = Prefs.lowMemoryMode && deviceProfile.isLowMemory
             val options =
                 VideoPlayerOptions(
                     userAgent =
@@ -415,7 +435,13 @@ class PlayerViewModel
                         ),
                     enableFfmpegAudioRenderer = Prefs.enableFfmpegAudioRenderer,
                     enableSoftwareVideoDecoder = Prefs.enableSoftwareVideoDecoder,
+                    enableTunneledPlayback = Prefs.enableTunneledPlayback,
+                    lowMemoryMode = lowMemoryMode,
                 )
+            logger.info {
+                "initVideoPlayer: tcl=${deviceProfile.isTcl}, memoryClass=${deviceProfile.memoryClassMb}MB, " +
+                    "lowMemoryMode=$lowMemoryMode, tunneled=${options.enableTunneledPlayback}"
+            }
 
             val newPlayer = exoPlayerFactory.create(context.applicationContext, options)
             newPlayer.setPlayerEventListener(videoPlayerListener)
@@ -429,6 +455,7 @@ class PlayerViewModel
         /** 释放播放器资源，同步进度到 B 站。 */
         fun detachPlayer() {
             syncProgress(scope = detachedWorkScope, isDetaching = true)
+            stopBufferingWatchdog()
             videoPlayer?.release()
             videoPlayer = null
             stopSeekerUpdater()
@@ -441,20 +468,31 @@ class PlayerViewModel
         fun togglePlayPause() {
             val player = videoPlayer ?: return
             if (player.isPlaying) {
+                // 用户主动暂停后不应再触发卡缓冲自动换源
+                stopBufferingWatchdog()
                 player.pause()
             } else {
+                bufferingRecoveryCount = 0
                 player.start()
+                if (_uiState.value.isBuffering) startBufferingWatchdog()
             }
         }
 
         /** 暂停视频，不改变其它播放器设置。 */
         fun pausePlayback() {
-            if (videoPlayer?.isPlaying == true) videoPlayer?.pause()
+            if (videoPlayer?.isPlaying == true) {
+                stopBufferingWatchdog()
+                videoPlayer?.pause()
+            }
         }
 
         /** 恢复视频播放。 */
         fun resumePlayback() {
-            if (videoPlayer?.isPlaying != true) videoPlayer?.start()
+            if (videoPlayer?.isPlaying != true) {
+                bufferingRecoveryCount = 0
+                videoPlayer?.start()
+                if (_uiState.value.isBuffering) startBufferingWatchdog()
+            }
         }
 
         /** 切换当前视频点赞状态，并同步详情页。 */
@@ -770,6 +808,8 @@ class PlayerViewModel
             val epid = state.epid
 
             loadVideoJob?.cancel()
+            bufferingRecoveryCount = 0
+            stopBufferingWatchdog()
             loadVideoJob =
                 viewModelScope.launch(Dispatchers.IO) {
                     try {
@@ -841,6 +881,8 @@ class PlayerViewModel
             videoPlayer?.let { player ->
                 // resolveMediaUrls 在开启自动选源时会做测速（挂起），需放入协程
                 viewModelScope.launch {
+                    bufferingRecoveryCount = 0
+                    stopBufferingWatchdog()
                     player.pause()
                     val currentPosition = player.currentPosition
                     val mediaUrls = resolveMediaUrls(new.qualityId, new.videoCodec, new.audio)
@@ -971,6 +1013,7 @@ class PlayerViewModel
                     isBuffering = false,
                 )
             }
+            stopBufferingWatchdog()
         }
 
         /** 「画质|编码」组合键。 */
@@ -1380,24 +1423,85 @@ class PlayerViewModel
         }
 
         /**
+         * 启动卡缓冲看门狗。
+         *
+         * 播放器持续缓冲超过 [BUFFERING_WATCHDOG_MS] 时，优先切换到下一个 CDN 候选，
+         * 候选耗尽后原位重连；单次播放会话最多自动恢复 [MAX_BUFFERING_RECOVERIES] 次，
+         * 仍无起色则上报加载超时错误，避免无限「加载中」。
+         *
+         * 已在计时时不重复启动；播放器恢复（[VideoPlayerListener.onReady] /
+         * [VideoPlayerListener.onPlay]）或用户主动暂停/切集时停止。
+         */
+        private fun startBufferingWatchdog() {
+            if (bufferingWatchdogJob?.isActive == true) return
+            bufferingWatchdogJob =
+                viewModelScope.launch {
+                    delay(BUFFERING_WATCHDOG_MS)
+                    while (isActive && _uiState.value.isBuffering) {
+                        if (bufferingRecoveryCount >= MAX_BUFFERING_RECOVERIES) {
+                            failPlayback("加载超时，请检查网络或切换播放节点")
+                            break
+                        }
+                        bufferingRecoveryCount++
+                        logger.warn { "Buffering timeout, recovery attempt #$bufferingRecoveryCount" }
+                        when {
+                            tryNextCdnFallback() -> {
+                                _uiEffect.tryEmit(PlayerUiEffect.ShowToast("加载超时，已切换播放节点"))
+                            }
+
+                            restartCurrentStream() -> {
+                                _uiEffect.tryEmit(PlayerUiEffect.ShowToast("加载超时，正在重新连接"))
+                            }
+
+                            else -> {
+                                failPlayback("加载超时，请检查网络或切换播放节点")
+                                break
+                            }
+                        }
+                        delay(BUFFERING_WATCHDOG_MS)
+                    }
+                }
+        }
+
+        /** 停止卡缓冲看门狗。 */
+        private fun stopBufferingWatchdog() {
+            bufferingWatchdogJob?.cancel()
+            bufferingWatchdogJob = null
+        }
+
+        /**
          * 尝试切换到下一个候选 CDN 地址重播。
          *
-         * 仅在开启自动选源且仍有未尝试的候选时生效。保留当前播放位置，
-         * 切换成功返回 `true`，无候选可用返回 `false`（由调用方上报错误）。
+         * 由播放错误（自动选源模式）或卡缓冲看门狗调用。保留当前播放位置，
+         * 切换成功返回 `true`，无候选可用返回 `false`（由调用方决定后续处理）。
          */
         private fun tryNextCdnFallback(): Boolean {
-            val player = videoPlayer ?: return false
             val nextIndex = cdnFallbackIndex + 1
-            val videoUrl = videoCdnCandidates.getOrNull(nextIndex) ?: return false
+            if (videoCdnCandidates.getOrNull(nextIndex) == null) return false
             cdnFallbackIndex = nextIndex
+            return prepareCdn(nextIndex)
+        }
+
+        /** 原位重新准备当前 CDN 流（候选耗尽后的重连）。 */
+        private fun restartCurrentStream(): Boolean = prepareCdn(cdnFallbackIndex)
+
+        /**
+         * 用候选列表第 [index] 个视频地址重新准备播放，保留当前进度。
+         *
+         * @return 播放器或候选地址不可用时返回 `false`
+         */
+        private fun prepareCdn(index: Int): Boolean {
+            val player = videoPlayer ?: return false
+            val videoUrl = videoCdnCandidates.getOrNull(index) ?: return false
             val audioUrl = audioCdnCandidates.firstOrNull()
             val position = player.currentPosition
-            logger.info { "CDN fallback #$nextIndex -> $videoUrl" }
+            logger.info { "Re-prepare CDN #$index -> $videoUrl" }
             _uiState.update { it.copy(isBuffering = true) }
             player.playUrl(videoUrl, audioUrl)
             player.prepare()
             if (position > 0) player.seekTo(position)
             player.start()
+            startBufferingWatchdog()
             return true
         }
 

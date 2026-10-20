@@ -26,15 +26,17 @@ import androidx.tv.material3.Text
 import dev.frost819.newbv.app.ui.component.FocusSaver
 import dev.frost819.newbv.app.ui.component.focusSaverItem
 import dev.frost819.newbv.app.ui.screen.settings.SettingsMenuNavItem
+import dev.frost819.newbv.core.device.DeviceProfile
 import dev.frost819.newbv.core.focus.touchClickable
+import dev.frost819.newbv.data.datastore.Prefs
 import java.text.DecimalFormat
 import kotlin.math.pow
 
 /**
  * 设备信息页。
  *
- * 显示设备型号、系统版本、屏幕分辨率、SOC、内存、存储等信息，
- * 底部按钮跳转编解码信息页。
+ * 显示设备型号、系统版本、屏幕分辨率、SOC、内存、存储、ABI、密度
+ * 以及低内存优化状态，底部按钮跳转编解码信息页。
  *
  * @param onOpenMediaCodec 点击"编解码信息"按钮的回调。
  */
@@ -46,6 +48,15 @@ fun InfoSetting(
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    val deviceProfile = remember { DeviceProfile.detect(context) }
+    val heapMaxMb = remember { Runtime.getRuntime().maxMemory() / (1024 * 1024) }
+    val displayMetrics = context.resources.displayMetrics
+    val lowMemoryStatus =
+        when {
+            !deviceProfile.isLowMemory -> "非低内存设备"
+            Prefs.lowMemoryMode -> "已启用"
+            else -> "已关闭"
+        }
 
     val memoryInfo =
         remember {
@@ -106,11 +117,26 @@ fun InfoSetting(
             Text(text = "厂商：${Build.MANUFACTURER}")
             Text(text = "型号：${Build.MODEL} (${Build.PRODUCT})")
             Text(text = "系统：Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-            Text(text = "屏幕：${screenInfo.first}x${screenInfo.second} @ ${String.format("%.1f", screenInfo.third)}fps")
+            Text(text = "ABI：${Build.SUPPORTED_ABIS.joinToString(", ")}")
+            Text(
+                text =
+                    "屏幕：${screenInfo.first}x${screenInfo.second} @ " +
+                        "${String.format("%.1f", screenInfo.third)}fps，" +
+                        "密度 ${displayMetrics.densityDpi} dpi (${displayMetrics.density}x)",
+            )
             if (Build.VERSION.SDK_INT >= 31) {
                 Text(text = "SOC：${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}")
             }
-            Text(text = "内存：可用 ${memoryInfo.first} / 总共 ${memoryInfo.second}")
+            Text(
+                text =
+                    "内存：可用 ${memoryInfo.first} / 总共 ${memoryInfo.second}" +
+                        "（应用堆上限 $heapMaxMb MB，等级 ${deviceProfile.memoryClassMb} MB）",
+            )
+            Text(
+                text =
+                    "设备画像：${if (deviceProfile.isTcl) "TCL" else "其他"}，" +
+                        "低内存优化 $lowMemoryStatus",
+            )
             Text(text = "存储：可用 ${storageInfo.first} / 总共 ${storageInfo.second}")
         }
         val buttonModifier = screenFocusSaver?.let { Modifier.focusSaverItem(it, "content_media_codec") } ?: Modifier

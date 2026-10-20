@@ -2,6 +2,7 @@ package dev.frost819.newbv.core.log
 
 import android.content.Context
 import android.os.Build
+import dev.frost819.newbv.core.device.DeviceProfile
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
@@ -249,6 +250,8 @@ class CrashHandler(
 
     private fun writeDeviceInfo(writer: OutputStreamWriter) {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        val profile = DeviceProfile.detect(context)
+        val metrics = context.resources.displayMetrics
         writer.apply {
             appendLine("======== Device info ========")
             appendLine("App Version: ${info.versionName} (${info.longVersionCode})")
@@ -258,6 +261,16 @@ class CrashHandler(
             appendLine("Manufacturer: ${Build.MANUFACTURER}")
             appendLine("Brand: ${Build.BRAND}")
             appendLine("Product: ${Build.PRODUCT}")
+            appendLine("ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
+            appendLine(
+                "Display: ${metrics.widthPixels}x${metrics.heightPixels} @ " +
+                    "${metrics.density}x (${metrics.densityDpi} dpi)",
+            )
+            appendLine(
+                "Memory: memoryClass=${profile.memoryClassMb}MB, " +
+                    "total=${profile.totalMemBytes / (1024 * 1024)}MB, " +
+                    "lowMemory=${profile.isLowMemory}, tcl=${profile.isTcl}",
+            )
         }
     }
 

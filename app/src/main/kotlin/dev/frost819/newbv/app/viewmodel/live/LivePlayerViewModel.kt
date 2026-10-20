@@ -17,6 +17,7 @@ import dev.frost819.newbv.biliapi.repositories.LivePlayInfo
 import dev.frost819.newbv.biliapi.repositories.LivePlayLine
 import dev.frost819.newbv.biliapi.repositories.LiveRepository
 import dev.frost819.newbv.biliapi.websocket.LiveDataWebSocket
+import dev.frost819.newbv.core.device.DeviceProfile
 import dev.frost819.newbv.core.log.Loggers
 import dev.frost819.newbv.data.datastore.Prefs
 import dev.frost819.newbv.player.AbstractVideoPlayer
@@ -129,11 +130,19 @@ class LivePlayerViewModel
          * 在 [loadLive] 时传入。
          */
         fun initVideoPlayer(context: Context) {
+            val deviceProfile = DeviceProfile.detect(context)
+            val lowMemoryMode = Prefs.lowMemoryMode && deviceProfile.isLowMemory
             val options =
                 VideoPlayerOptions(
                     userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
                     referer = "https://live.bilibili.com",
+                    enableTunneledPlayback = Prefs.enableTunneledPlayback,
+                    lowMemoryMode = lowMemoryMode,
                 )
+            logger.info {
+                "initVideoPlayer: tcl=${deviceProfile.isTcl}, memoryClass=${deviceProfile.memoryClassMb}MB, " +
+                    "lowMemoryMode=$lowMemoryMode, tunneled=${options.enableTunneledPlayback}"
+            }
             videoPlayer = exoPlayerFactory.create(context, options)
             videoPlayer?.setPlayerEventListener(
                 object : VideoPlayerListener {
