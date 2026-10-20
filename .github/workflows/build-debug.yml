@@ -31,12 +31,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # runner 已预装 Android SDK，直接用 sdkmanager 补装；不再用 setup-android，
-      # 该 action 会安装已下线的 "tools" 包导致失败。
+      # runner 已预装 Android SDK 但未导出 ANDROID_HOME，需自行定位并写回环境。
       - name: Install Android SDK packages
         run: |
-          SDKMANAGER=$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -maxdepth 2 -name sdkmanager | head -n 1)
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          fi
+          SDKMANAGER=$(command -v sdkmanager || true)
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -name sdkmanager | head -n 1)
+          fi
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Set up Gradle
@@ -82,11 +90,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 同 build job：runner 预装 SDK + sdkmanager 补装，避免 setup-android 安装 tools 失败。
+      # 同 build job：runner 预装 SDK + sdkmanager 补装，需自行导出 ANDROID_HOME。
       - name: Install Android SDK packages
         run: |
-          SDKMANAGER=$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -maxdepth 2 -name sdkmanager | head -n 1)
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          fi
+          SDKMANAGER=$(command -v sdkmanager || true)
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -name sdkmanager | head -n 1)
+          fi
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Set up Gradle
