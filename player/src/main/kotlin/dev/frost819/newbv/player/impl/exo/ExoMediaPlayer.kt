@@ -66,7 +66,7 @@ class ExoMediaPlayer(
         private const val LOW_MEMORY_MAX_BUFFER_MS = 30_000
         private const val LOW_MEMORY_BUFFER_FOR_PLAYBACK_MS = 1_500
         private const val LOW_MEMORY_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
-        private const val LOW_MEMORY_TARGET_BUFFER_BYTES = 64L * 1024 * 1024
+        private const val LOW_MEMORY_TARGET_BUFFER_BYTES = 64 * 1024 * 1024
     }
 
     /** ExoPlayer 实例，在 [initPlayer] 中创建 */
