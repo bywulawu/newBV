@@ -41,9 +41,13 @@ jobs:
           fi
           SDKMANAGER=$(command -v sdkmanager || true)
           if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -name sdkmanager | head -n 1)
+            SDKMANAGER=$(find "$SDK_ROOT" -maxdepth 4 -path '*/cmdline-tools/*/bin/sdkmanager' -print -quit || true)
           fi
-          test -n "$SDKMANAGER"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDK_ROOT" >&2
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
@@ -100,9 +104,13 @@ jobs:
           fi
           SDKMANAGER=$(command -v sdkmanager || true)
           if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -name sdkmanager | head -n 1)
+            SDKMANAGER=$(find "$SDK_ROOT" -maxdepth 4 -path '*/cmdline-tools/*/bin/sdkmanager' -print -quit || true)
           fi
-          test -n "$SDKMANAGER"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDK_ROOT" >&2
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
