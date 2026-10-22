@@ -139,8 +139,9 @@ fun AudioVideoSetting(modifier: Modifier = Modifier) {
         )
         SettingSwitchListItem(
             title = "隧道播放（实验性）",
-            supportText = "音视频直通电视硬件链路，可能改善 TCL 电视的卡顿或音画不同步；" +
-                "部分机型可能黑屏，切换后需重新进入播放器",
+            supportText =
+                "音视频直通电视硬件链路，可能改善 TCL 电视的卡顿或音画不同步；" +
+                    "部分机型可能黑屏，切换后需重新进入播放器",
             checked = enableTunneledPlayback,
             onCheckedChange = {
                 enableTunneledPlayback = it
